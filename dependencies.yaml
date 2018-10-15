@@ -1,0 +1,11 @@
+channels:
+  - bioconda
+dependencies:
+  - matplotlib
+  - pandas
+  - numpy
+  - dash-core-components
+  - dash-html-components
+  - pip:
+    - plotly
+    - 
