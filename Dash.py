@@ -164,6 +164,7 @@ def parse_tsv_contents(contents, filename):
     try:
         return pd.read_csv(io.StringIO(decoded.decode('utf-8')), sep='\t')
     except Exception as e:
+        print("ERROR")
         print(e)
         return None
     #etry
@@ -194,7 +195,12 @@ def parse_abi_contents(contents, filenames):
 
 def draw_primer_view():
     if aState.primer_table is None:
-        return html.Div(children=[ "Please upload a primer table first" ])
+        return html.Div(children=[ "Please upload a primer table first", html.Br(),
+                                   "The table you upload MUST contain columns: 'variantid', 'primer', 'direction', 'sequence'.", html.Br(),
+                                   "  variantid: Variant identifier, String with format: 'chr-pos-ref-alt", html.Br(),
+                                   "  primer: Primar name, String", html.Br(),
+                                   "  direction: Primer direction, String: [Forward|Reverse]", html.Br(),
+                                   "  sequence:  Primer sequence, String: [AaGgCcTt]+", html.Br() ])
     #fi
     print('DRAW ATTEMPT', aState.primer_table.columns)
     df = aState.primer_table
@@ -204,7 +210,10 @@ def draw_primer_view():
 
 def draw_well_view():
     if aState.well_table is None:
-        return html.Div(children=[ "Please upload a well table first" ])
+        return html.Div(children=[ "Please upload a file table first", html.Br(),
+                           "The table you upload MUST contain columns: 'filename', 'variantid'.", html.Br(),
+                           "  filename: The name of the ABI file", html.Br(),
+                           "  variantid: Variant identifier, String with format: 'chr-pos-ref-alt", html.Br() ])
     #fi
 
     return html.Div(children=generate_table(aState.well_table))
@@ -229,7 +238,12 @@ def load_or_process_primers(process_clicks, load_clicks):
     elif (load_clicks is not None) and (aState.getButtonCount('load_primer') < load_clicks):
         aState.incrementButtonCount('load_primer')
     else:
-        return None
+        return html.Div(children=[ "Please upload a primer table first", html.Br(),
+                                   "The table you upload MUST contain columns: 'variantid', 'primer', 'direction', 'sequence'.", html.Br(),
+                                   "  variantid: Variant identifier, String with format: 'chr-pos-ref-alt", html.Br(),
+                                   "  primer: Primar name, String", html.Br(),
+                                   "  direction: Primer direction, String: [Forward|Reverse]", html.Br(),
+                                   "  sequence:  Primer sequence, String: [AaGgCcTt]+", html.Br() ])
     #fi
     return draw_primer_view()
 #edef
@@ -253,13 +267,14 @@ def process_inputs(process_clicks):
         #fi
         bres = bres[bres.groupby('qseqid').transform(max).bitscore == bres.bitscore]
         aState.chromatogram_blasts = bres
+    #fi
 
     if ((aState.chromatogram_blasts is not None) and
-       (aState.well_table is not None) and
        (aState.primer_table is not None)):
+        print(aState.chromatogram_blasts)
         aState.bres_abi = sab.process_abi_alignments(aState.primer_table,
-                                                     aState.well_table,
-                                                     aState.chromatogram_blasts.copy())
+                                                     aState.chromatogram_blasts.copy(),
+                                                     aState.well_table)
 
     #fi
     return None
@@ -280,19 +295,29 @@ def draw_chromatogram(selected_abi):
     abi = aState.abi_dict[selected_abi]
 
     if aState.bres_abi is not None:
+        print(aState.bres_abi.columns)
         if 'var_location' not in aState.chromatogram_figures[selected_abi]:
-            aState.chromatogram_figures[selected_abi]['var_location'] = []
+            print('making var_location figures')
+            aState.chromatogram_figures[selected_abi]['var_location'] = {}
             bres_abi = aState.bres_abi
             for i, row in bres_abi[bres_abi.qseqid == selected_abi].iterrows():
+                chromat_pos = row.chromat_pos
+                print(chromat_pos)
+                print(row.sseqid)
+                print(list(aState.bres_abi.columns))
                 keys = list(row.chromat_pos.keys())
-                if row.VID in keys:
-                    keys = [row.VID]
+                if ('variantid' in row.index) and (row.variantid in keys):
+                    keys = [row.variantid]
                 #fi
                 for true_vid in keys:
-                    pos = row.chromat_pos[true_vid]
+                    pos = chromat_pos[true_vid]
                     ax = abi.chromatogram(xlim=(pos-10, pos+10), highlight=(pos-.5,pos+.5))
-                    ax.set_title('%s | %s\n%s -> %s' % (selected_abi, row.variant_id, row.VID, true_vid))
-                    aState.chromatogram_figures[selected_abi]['var_location'].append(sab.fig_to_uri(ax.figure))
+                    primer = row.primer if 'primer' in row.index else "UNKNOWN"
+                    variantid = row.variantid if 'variantid' in row.index else "UNKNOWN"
+                    VID = row.primer if 'primer' in row.index else 'UNKNOWN'
+                    true_vid_primer = aState.primer_table[aState.primer_table.variantid == true_vid].primer.values[0]
+                    ax.set_title('%s | Goal variant: %s\nAligned to: %s -> %s' % (selected_abi, row.variantid, true_vid_primer, true_vid), fontsize=5)
+                    aState.chromatogram_figures[selected_abi]['var_location'][true_vid] = (sab.fig_to_uri(ax.figure))
                 #efor
             #efor
         #fi
@@ -301,17 +326,54 @@ def draw_chromatogram(selected_abi):
         aState.chromatogram_figures[selected_abi]['full'] = sab.fig_to_uri(abi.chromatogram().figure)
     #fi
 
-    figures = [ aState.chromatogram_figures[selected_abi]['full'] ]
+    figures = {}
     if 'var_location' in aState.chromatogram_figures[selected_abi]:
-        figures = figures + aState.chromatogram_figures[selected_abi]['var_location']
+        figures = aState.chromatogram_figures[selected_abi]['var_location']
     #fi
 
-    images = html.Div(children=[
-            html.Img(src=source, style={"width":"100%"}) for source in figures
-        ],
-        style={"width":"100%"})
 
-    return html.Div(children=[images])
+    images = [ html.Img(src=aState.chromatogram_figures[selected_abi]['full'], style={"width":"100%"}) ]
+
+    for var_loc, source in figures.items():
+        
+        images.append(html.H2(children=[var_loc]))
+        if len(var_loc.split('-')) == 4:
+            chrom, pos, ref, alt = var_loc.split('-')
+            pos = int(pos)-1
+            context = 3
+            fwd_seq = sab.hg.genome[chrom][pos-context:pos+context+1]
+            rev_seq = fwd_seq.revcomp().seq
+            fwd_seq = fwd_seq.seq
+            context_seqs = [
+                'Forward: ' + fwd_seq[:context] + '[%s/%s]' % (fwd_seq[context], alt) + fwd_seq[context+1:],
+                html.Br(),
+                html.Span(children='s'*9, style={"color":"white"}), '-'*context + '[R/A]' + '-'*context,
+                html.Br(),
+                'Reverse: ' + rev_seq[:context] + '[%s/%s]' % (rev_seq[context], sab.biu.formats.Sequence(None, alt).revcomp().seq) \
+                            + rev_seq[context+1:]
+                ]
+            print(context_seqs)
+            images.append(html.Div(children=context_seqs,
+                style={"line-height" : "1em",
+                       "text-align": "left",
+                       "font-size" : "small",
+                       "width" : "50%",
+                       "font-family":"Consolas,Monaco,Lucida Console,Liberation Mono,DejaVu Sans Mono,Bitstream Vera Sans Mono,Courier New, monospace"}))
+        #fi
+        images.append(html.Img(src=source, style={"width":"100%"})),
+        images.append(html.Br())
+        images.append(html.Br())
+    #efor
+    images = html.Div(children=images, style={"width":"100%"})
+    info   = [ "Sequence length : %d" % len(aState.abi_dict[selected_abi].seq) ]
+    if aState.well_table is not None:
+        print("'%s'" % selected_abi)
+
+        rel_rows = aState.well_table[(aState.well_table.filename == selected_abi)]
+        info.append(generate_table(rel_rows))
+    #fi
+    info = html.Div(children=info, style={"width":"100%"})
+    return html.Div(children=[info, images])
 #edef
 
 @app.callback(Output('hidden-primer-upload-div', 'children'),
@@ -320,9 +382,15 @@ def draw_chromatogram(selected_abi):
                State('upload-primer-table', 'last_modified')])
 def upload_primer_table(contents, names, dates):
     if contents is not None:
-        print(names)
         data = parse_tsv_contents(contents, names)
-        print(data.columns)
+
+        expected_columns = set([ 'variantid', 'primer', 'direction', 'sequence' ])
+
+        # Only accept a primer table with the above columns
+        if len(set(data.columns) & expected_columns) != len(expected_columns):
+            aState.primer_table = None
+            return None
+        #fi
 
         if ((aState.primer_table is None) or
             not(aState.primer_table.equals(data[[ c for c in aState.primer_table.columns if c in data.columns ]]))):
@@ -341,13 +409,18 @@ def upload_primer_table(contents, names, dates):
                State('upload-well-table', 'last_modified')])
 def upload_well_table(contents, names, dates):
     if contents is not None:
-        print(names)
         data = parse_tsv_contents(contents, names)
-        data['id'] = data.well + '.' + data.run.map(str)
+        print(data)
+        expected_columns = set(['filename', 'variantid'])
 
-        if (aState.well_table is None) or not(aState.well_table.equals(data)):
+        # Only accept a primer table with the above columns
+        if len(set(data.columns) & expected_columns) != len(expected_columns):
+            aState.well_table = None
+            data = None
+        elif ((aState.well_table is None) or not(aState.well_table.equals(data))):
             aState.well_table = data
-            aState.bres_abi is None
+            aState.bres_abi   = None
+        #fi
     #fi
 
     return draw_well_view()
@@ -371,7 +444,7 @@ def upload_abi_files(contents, names, dates):
     if len(aState.abi_dict) == 0:
         return [{"label":"No AB1 files uploaded", "value":None}]
     else:
-        return [ {"label":k, "value":k} for (k,v) in aState.abi_dict.items() ]
+        return sorted([ {"label":k, "value":k} for (k,v) in aState.abi_dict.items() ], key=lambda x: x['label'])
     #fi
 #edef
 
